@@ -42,12 +42,10 @@ history_aware_retriever = create_history_aware_retriever(
 
 ### Answer question ###
 system_prompt = (
-    "You are an assistant for question-answering tasks. "
-    "Use the following pieces of retrieved context to answer "
-    "the question. If you don't know the answer, say that you "
-    "don't know. Use three sentences maximum and keep the "
-    "answer concise."
-    "\n\n"
+    "你是一个回答问题的助手。"
+    "使用以下提供的上下文信息来回答问题。如果你不知道答案，就说你不知道。"
+    "最多使用三句话，并保持答案简洁。"
+    "\n\n上下文信息如下：\n\n"
     "{context}"
 )
 qa_prompt = ChatPromptTemplate.from_messages(
@@ -57,9 +55,9 @@ qa_prompt = ChatPromptTemplate.from_messages(
         ("human", "{input}"),
     ]
 )
-question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+qa_chain = create_stuff_documents_chain(llm, qa_prompt)
 
-rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+#rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
 
 
@@ -70,10 +68,6 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 
 store = {}  # memory is maintained outside the chain
 def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
-    if session_id not in store:
-        store[session_id] = InMemoryChatMessageHistory()
-        return store[session_id]
-
     memory = ConversationSummaryBufferMemory(
         chat_memory=store[session_id],
         llm=llm,
@@ -89,13 +83,14 @@ def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
     return store[session_id]
 
 qa = RunnableWithMessageHistory(
-        rag_chain,
+        qa_chain,
         get_session_history,
         input_messages_key="input",
         history_messages_key="chat_history",
-        output_messages_key="answer",)
+        #output_messages_key="answer",
+        )
 
-
+from classes import rerank
 # 交互对话的函数
 def chat_loop():
     print("Chatbot 已启动! 输入'exit'来退出程序。")
@@ -109,9 +104,35 @@ def chat_loop():
             store[session_id] = InMemoryChatMessageHistory()
             print("对话历史已清空。")
             continue
+        
+        if session_id not in store:
+            store[session_id] = InMemoryChatMessageHistory()
+            chat_history=[]
+        else:
+            # 获取对话历史
+            chat_history = store[session_id].messages
+
+        retrieved_docs = history_aware_retriever.invoke({"input": user_input,"chat_history": chat_history})
+        
+        unique_docs = []
+        for item in retrieved_docs:
+            if item not in unique_docs:
+                unique_docs.append(item)
+
+        print(100*"*","\n检索到的文档：\n",unique_docs)
+        if len(unique_docs) == 0:
+            print("没有找到相关文档.")
+            reranked_docs=[]
+        else:
+            reranked_docs = rerank(user_input,unique_docs)
+            reranked_docs = [doc[0] for doc in reranked_docs]
+        print(100*"*","\n重排序的文档：\n",reranked_docs)
+
         # 调用 Retrieval Chain  
-        response = qa.invoke({"input":user_input}, config={"configurable": {"session_id": session_id}})
-        print(f"Chatbot: {response['answer']}")
+        response = qa.invoke({"input":user_input,"context":reranked_docs}, config={"configurable": {"session_id": session_id}})
+        print(100*"=","\n下面是AI的回答：\n")
+        print(f"Chatbot: {response}")
+        print(100*"=","\n")
 
 
 # 启动 Chatbot

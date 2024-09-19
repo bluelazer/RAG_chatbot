@@ -3,6 +3,12 @@ from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
+from langchain.retrievers.multi_query import MultiQueryRetriever
+# Set logging for the queries
+import logging
+
+logging.basicConfig()
+logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.INFO)
 
 def get_retriever(model_name,persist_directory,collection_name):
     model_kwargs = {'device': 'cuda'}
@@ -17,8 +23,12 @@ def get_retriever(model_name,persist_directory,collection_name):
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 10, "lambda_mult": 0.8},
     )
-
-    return retriever
+    #添加multi_query
+    llm = ChatOpenAI(model = "gpt-4o-mini",max_tokens=3000)
+    multi_query_retriever = MultiQueryRetriever.from_llm(
+    retriever=retriever , llm=llm)
+    return multi_query_retriever
+    #return retriever
 
 def get_compression_retriever():
     persist_directory = 'para_db'
